@@ -1,6 +1,6 @@
 # Continuous PDE Dynamics Forecasting with Implicit Neural Representations
 
-Official PyTorch implementation of DINo (Dynamics-aware Implicit Neural Representation) | [paper](https://arxiv.org/abs/2209.14855)
+Official PyTorch implementation of DINo (Dynamics-aware Implicit Neural Representation) | [Accepted at ICLR 2023 (Notable-Top-25%, Spotlight)](https://openreview.net/forum?id=B73niNjbPs) | [Arxiv](https://arxiv.org/abs/2209.14855) 
 
 [Yuan Yin](https://yuan-yin.github.io/) (equal contribution), [Matthieu Kirchmeyer](https://mkirchmeyer.github.io/) (equal contribution), [Jean-Yves Franceschi](https://jyfranceschi.fr) (equal contribution), [Alain Rakotomamonjy](http://asi.insa-rouen.fr/enseignants/~arakoto/), [Patrick Gallinari](http://www-connex.lip6.fr/~gallinar/gallinari/pmwiki.php)
 
@@ -46,7 +46,7 @@ By running the train script, it will generate an unique id of each run, called t
 Logs are available in `./results/<RUN_ID>/log` and display the result over In/Out-s + In/Out-t for both train and test trajectories (cf the Figure below where red represents observed data and our paper for more details). 
 These are the numbers reported in Table 2.
 
-![task](https://user-images.githubusercontent.com/15007187/194805456-b8e4b5e4-139c-4199-818f-b945a54bd9a7.png)
+![task.pdf](https://github.com/mkirchmeyer/DINo/files/10471911/task.pdf)
 
 ## Inference on new conditions
 

@@ -46,7 +46,7 @@ By running the train script, it will generate an unique id of each run, called t
 Logs are available in `./results/<RUN_ID>/log` and display the result over In/Out-s + In/Out-t for both train and test trajectories (cf the Figure below where red represents observed data and our paper for more details). 
 These are the numbers reported in Table 2.
 
-![task.pdf](https://github.com/mkirchmeyer/DINo/files/10471911/task.pdf)
+![task](https://user-images.githubusercontent.com/15007187/215505653-843c1b0e-f7e1-41ce-819b-a16aec1d09d5.png)
 
 ## Inference on new conditions
 
@@ -68,13 +68,13 @@ python3 test.py -d <DATASET> -p <RUN_ID> -g 0 -r <RATE> -s <SEED>
 https://user-images.githubusercontent.com/15007187/194547306-e0f151cf-a4fc-43be-a907-35816124020d.mp4
 
 ## Citation
+
 ```
-@misc{Yin2022,
-  url = {https://arxiv.org/abs/2209.14855},  
-  author = {Yin, Yuan and Kirchmeyer, Matthieu and Franceschi, Jean-Yves and Rakotomamonjy, Alain and Gallinari, Patrick},  
-  title = {Continuous PDE Dynamics Forecasting with Implicit Neural Representations},  
-  publisher = {arXiv},  
-  year = {2022},  
-  copyright = {Creative Commons Attribution 4.0 International}
+@inproceedings{Yin2023,
+title={Continuous PDE Dynamics Forecasting with Implicit Neural Representations},
+author={Yin, Yuan and Kirchmeyer, Matthieu and Franceschi, Jean-Yves and Rakotomamonjy, Alain and Gallinari, Patrick},
+booktitle={International Conference on Learning Representations},
+year={2023},
+url={https://openreview.net/forum?id=B73niNjbPs}
 }
 ```

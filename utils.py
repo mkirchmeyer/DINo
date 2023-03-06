@@ -16,7 +16,7 @@ from torch.utils.data import DataLoader
 from torch.nn import init
 from torch import nn
 import shelve
-from data_pdes import WaveDataset, NavierStokesDataset, ShallowWaterDataset
+from data_pdes import WaveDataset, NavierStokesDataset, ShallowWaterDataset, SST
 import math
 import torch
 from logging.handlers import RotatingFileHandler
@@ -118,6 +118,35 @@ def process_config(input_dataset, path_results, device="gpu:0", mask_data=0.0, n
         dataset_tr = ShallowWaterDataset(**dataset_tr_params)
         dataset_tr_eval = ShallowWaterDataset(**dataset_tr_eval_params)
         dataset_ts = ShallowWaterDataset(**dataset_ts_params)
+    elif input_dataset == "sst":
+        state_dim = 1
+        coord_dim = 2
+        code_dim = 400
+        hidden_c = 800
+        hidden_c_enc = 256
+        n_layers = 6
+        minibatch_size = 32
+        size = (64, 64)
+        dataset_tr_params = {
+            'data_dir': '/path/to/sst/dataset',
+            'nt_cond': 4,
+            'nt_pred': 6,
+            'train': True, 
+            'zones': range(17, 21),
+        }
+
+        dataset_ts_params = dict()
+        dataset_ts_params.update(dataset_tr_params)
+        dataset_ts_params["train"] = False
+        dataset_ts_params["zones"] = range(17, 21)
+
+
+        dataset_tr = SST(**dataset_tr_params)
+        dataset_ts = SST(**dataset_ts_params)
+        dataset_tr_eval = dataset_ts
+        
+        dataset_tr_params['n_seq'] = len(dataset_tr)
+        dataset_tr_eval_params = dataset_tr_params
     else:
         raise Exception(f"{input_dataset} does not exist")
     if isinstance(size, int):
@@ -243,6 +272,87 @@ def eval_dino(dataloader, net_dyn, net_dec, device, method, criterion, mask_data
     set_requires_grad(net_dyn, True)
     return loss, loss_in_t, loss_in_t_in_s, loss_in_t_out_s, loss_out_t, loss_out_t_in_s, loss_out_t_out_s, gts, mos
 
+def eval_dino_cond(dataloader, net_dyn, net_dec, net_cond, device, method, criterion, mask_data, mask, state_dim, code_dim,
+              coord_dim, n_frames_train=0, states_params=None, lr_adapt=0.0, input_dataset=None, n_steps=300, n_cond=4, is_test=True):
+    loss, loss_out_t, loss_in_t = 0.0, 0.0, 0.0
+    gts, mos, times, ss, pss, cs = [], [], [], [], [], []
+    set_requires_grad(net_dec, False)
+    set_requires_grad(net_dyn, False)
+    set_requires_grad(net_cond, False)
+    for j, batch in enumerate(dataloader):
+        ground_truth = batch['data'].to(device)
+        t = batch['t'][0].to(device)
+        b_size, t_size, h_size, w_size, _ = ground_truth.shape
+        index = batch['index'].to(device)
+        model_input = batch['coords'].to(device)
+        if lr_adapt != 0.0:
+            states_params_out = nn.ParameterList([nn.Parameter(torch.zeros(n_cond + 1, code_dim * state_dim).to(device)) for _ in range(b_size)])
+            optim_states_out = torch.optim.Adam(states_params_out, lr=lr_adapt)
+            for i in range(n_steps):
+                states_params_index = torch.stack(list(states_params_out), dim=1)  
+                states = states_params_index.permute(1, 0, 2).view(b_size, n_cond + 1, state_dim, code_dim)
+                model_input_exp = model_input.view(b_size, 1, h_size, w_size, 1, coord_dim)
+                model_input_exp = model_input_exp.expand(b_size, n_cond + 1, h_size, w_size, state_dim, coord_dim)
+                model_output, _ = net_dec(model_input_exp, states)
+                loss_l2 = criterion(model_output[:, :, mask, :], ground_truth[:, :n_cond + 1, mask, :])
+                loss_opt_new = loss_l2
+                loss_opt = loss_opt_new
+                optim_states_out.zero_grad(True)
+                loss_opt.backward()
+                optim_states_out.step()
+        with torch.no_grad():
+            if lr_adapt == 0.0:
+                states_params_index = [states_params[d] for d in index]
+                states_params_index = torch.stack(states_params_index, dim=1)
+                states = states_params_index.permute(1, 0, 2).view(b_size, n_frames_train, state_dim, code_dim)
+            model_input_exp = model_input.view(b_size, 1, h_size, w_size, 1, coord_dim)
+            model_input_exp = model_input_exp.expand(b_size, t_size-n_cond, h_size, w_size, state_dim, coord_dim)
+            extra_state = net_cond(states_params_index[:n_cond].permute(1, 0, 2).detach().clone())
+            augmented_state = torch.cat([extra_state, states_params_index[n_cond].detach().clone()], dim=-1)
+
+            codes = odeint(net_dyn, augmented_state, t, method=method)  # t x batch x dim
+            codes = codes[:, :, code_dim:].permute(1, 0, 2).view(b_size, t.numel(), state_dim, code_dim)  # batch x t x dim
+
+            model_output, _ = net_dec(model_input_exp, codes)
+
+            ground_truth_ = ground_truth[:, n_cond:n_frames_train, :, :, :]
+            model_output_ = model_output
+
+            if input_dataset == "sst":
+                mu_norm, std_norm = batch['mu_norm'].to(device).unsqueeze(-1), batch['std_norm'].to(device).unsqueeze(-1)
+
+                model_output_ = (model_output_ * std_norm) + mu_norm
+                ground_truth_ = (ground_truth_ * std_norm) + mu_norm
+
+                # Original space for MSE
+                mu_clim, std_clim = batch['mu_clim'].to(device).unsqueeze(-1), batch['std_clim'].to(device).unsqueeze(-1)
+                model_output_ = (model_output_ * std_clim) + mu_clim
+                ground_truth_ = (ground_truth_ * std_clim) + mu_clim
+
+            if n_frames_train != 0:
+                loss_in_t += criterion(model_output_[:, :n_frames_train-n_cond, :, :, :], ground_truth_)
+                loss += criterion(model_output_[:, :n_frames_train-n_cond, :, :, :], ground_truth_)
+            if mask_data != 0.0:
+                loss_in_t_in_s += criterion(model_output_[:, :n_frames_train, mask, :], ground_truth[:, :n_frames_train, mask, :])
+                loss_in_t_out_s += criterion(model_output_[:, :n_frames_train, ~mask, :], ground_truth[:, :n_frames_train, ~mask, :])
+            gts.append(ground_truth.cpu())
+            mos.append(model_output.cpu())
+            pss.append(torch.zeros(1))
+            times.append(t.cpu())
+            ss.append(states.cpu())
+            cs.append(codes.cpu())
+        print(j)
+        if not is_test:
+            break
+    loss /= (j+1)
+    loss_in_t /= (j+1)
+
+    set_requires_grad(net_dec, True)
+    set_requires_grad(net_dyn, True)
+    set_requires_grad(net_cond, True)
+    
+    return loss, loss_in_t, gts, mos, times, ss, pss, cs
+
 
 def scheduling(_int, _f, true_codes, t, epsilon, method='rk4'):
     if epsilon < 1e-3:
@@ -332,16 +442,15 @@ def DataLoaderODE(dataset, minibatch_size, is_train=True):
     return DataLoader(**dataloader_params)
 
 
-def write_image(batch_gt, batch_pred, state_idx, path, cmap='plasma'):
+def write_image(batch_gt, batch_pred, state_idx, path, cmap='plasma', divider=1):
     """
     Print reference trajectory (1st line) and predicted trajectory (2nd line).
     Skip every N frames (N=divider)
     """
     batch_gt = torch.permute(batch_gt, (1, 0, 2, 3, 4))
     batch_pred = torch.permute(batch_pred, (1, 0, 2, 3, 4))
-    seq_len, batch_size, height, width, state_c = batch_pred.shape  # [8, 20, 64, 64, 2]
-    divider = 3
-    t_horizon = seq_len // divider + 1
+    seq_len, batch_size, height, width, state_c = batch_gt.shape  # [8, 20, 64, 64, 2]
+    t_horizon = math.ceil(seq_len / divider)
     fig = plt.figure(figsize=(t_horizon, batch_size * 2.))
     grid = ImageGrid(fig, 111,  # similar to subplot(111)
                      nrows_ncols=(batch_size * 2, t_horizon),  # creates 2x2 grid of axes
@@ -352,9 +461,11 @@ def write_image(batch_gt, batch_pred, state_idx, path, cmap='plasma'):
         for t in range(t_horizon):
             # Iterating over the grid returns the Axes.
             grid[2 * traj * t_horizon + t].imshow(batch_gt[divider * t, traj, :, :, state_idx].cpu().numpy(), vmax=vmax, vmin=vmin, cmap=cmap, interpolation='none')
-            grid[(2 * traj + 1) * t_horizon + t].imshow(batch_pred[divider * t, traj, :, :, state_idx].cpu().numpy(), vmax=vmax, vmin=vmin, cmap=cmap, interpolation='none')
+            if t - 4 >= 0:
+                grid[(2 * traj + 1) * t_horizon + t].imshow(batch_pred[divider * t - 4, traj, :, :, state_idx].cpu().numpy(), vmax=vmax, vmin=vmin, cmap=cmap, interpolation='none')
             grid[2 * traj * t_horizon + t].set_axis_off()
             grid[(2 * traj + 1) * t_horizon + t].set_axis_off()
+
     plt.savefig(os.path.join(path), dpi=72, bbox_inches='tight', pad_inches=0)
     plt.close(fig)
 

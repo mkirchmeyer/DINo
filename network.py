@@ -95,7 +95,23 @@ class CodeBilinear(nn.Module):
 
 
 class MLP(nn.Module):
-    def __init__(self, code_size, hidden_size, nl='swish'):
+    def __init__(self, code_size, hidden_size, out_size=None, nl='swish'):
+        super().__init__()
+        self.net = nn.Sequential(
+            nn.Linear(code_size, hidden_size), 
+            nls[nl](), 
+            nn.Linear(hidden_size, hidden_size),
+            nls[nl](), 
+            nn.Linear(hidden_size, hidden_size), 
+            nls[nl](), 
+            nn.Linear(hidden_size, code_size if out_size == None else out_size),
+        )
+
+    def forward(self, x):
+        return self.net(x)
+    
+class SetEncoder(nn.Module):
+    def __init__(self, code_size, n_cond, hidden_size, out_size=None, nl='swish'):
         super().__init__()
         self.net = nn.Sequential(
             nn.Linear(code_size, hidden_size),
@@ -104,11 +120,13 @@ class MLP(nn.Module):
             nls[nl](),
             nn.Linear(hidden_size, hidden_size),
             nls[nl](),
-            nn.Linear(hidden_size, code_size),
+            nn.Linear(hidden_size, code_size if out_size == None else out_size),
         )
+        self.ave = nn.Conv1d(code_size, code_size, n_cond)
 
     def forward(self, x):
-        return self.net(x)
+        aggreg = self.net(x)
+        return self.ave(aggreg.permute(0, 2, 1)).permute(0, 2, 1).squeeze()
 
 
 class MFNBase(nn.Module):

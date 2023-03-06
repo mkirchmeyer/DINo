@@ -22,6 +22,8 @@ import numpy as np
 import os
 import h5py
 
+from netCDF4 import Dataset as netCDFDataset
+
 
 def get_mgrid(sidelen, vmin=-1, vmax=1, dim=2):
     """
@@ -382,3 +384,88 @@ class ShallowWaterDataset(AbstractDataset):
             torch.from_numpy(f['tasks/height'][:, ::2, ::2]) * 3000.,
             torch.from_numpy(f['tasks/vorticity'][:, ::2, ::2] * 2),
             ], dim=0)}
+    
+def extract_data(fp, variables):
+    loaded_file = netCDFDataset(fp, 'r')
+    data_dict = {}
+    for var in variables:
+        data_dict[var] = loaded_file.variables[var][:].data
+    return data_dict
+
+class SST(Dataset):
+    var_names = ['thetao', 'daily_mean', 'daily_std']
+
+    def __init__(self, data_dir, nt_cond, nt_pred, train, zones=range(1, 30)):
+        super(SST, self).__init__()
+
+        self.data_dir = data_dir
+        self.pred_h = nt_pred
+        self.zones = list(zones)
+        self.lb = nt_cond
+        self.zone_size = 64
+
+        self.data = {}
+        self.cst = {}
+        self.climato = {}
+
+        self.train = train
+
+        self._normalize()
+
+        self.first = 0 if self.train else int(0.8 * self.len_)
+
+        self.coords = get_mgrid(self.zone_size, vmin=-1., vmax=1., dim=2)
+        self.coord_dim = self.coords.shape[-1]
+
+        # Retrieve length
+        
+        if self.train:
+            self.len_ = int(0.8 * self.len_)
+        else:
+            self.len_ = self.len_ - int(0.8 * self.len_)
+
+        self.len_ = int(self.len_ * 0.1)
+
+        self.len_ = self.len_ - self.pred_h - self.lb - 1
+        self._total_len = len(self.zones) * self.len_
+
+    def _normalize(self):
+        for zone in self.zones:
+            zdata = extract_data(os.path.join(self.data_dir, f'data_{zone}.nc'), variables=self.var_names)
+            self.len_ = len(zdata["thetao"])
+
+            climate_mean, climiate_std = zdata['daily_mean'].reshape(-1, 1, 1), zdata['daily_std'].reshape(-1, 1, 1)
+            zdata["thetao"] = (zdata["thetao"] - climate_mean) / climiate_std
+            self.climato[zone] = (climate_mean, climiate_std)
+
+            mean = zdata["thetao"].mean(axis=(1, 2)).reshape(-1, 1, 1)
+            std = zdata["thetao"].std(axis=(1, 2)).reshape(-1, 1, 1)
+            zdata["thetao"] = (zdata["thetao"] - mean) / std
+            self.cst[zone] = (mean, std)
+            self.data[zone] = zdata["thetao"]
+
+    def __len__(self):
+        return self._total_len
+
+    def __getitem__(self, idx):
+        t = torch.arange(0, self.pred_h, 1).float()
+        file_id = self.zones[idx // self.len_]
+        idx_id = (idx % self.len_ * 10) + self.lb + 1 + self.first
+        
+        inputs = self.data[file_id][idx_id - self.lb + 1: idx_id + 1].reshape(self.lb, 1, self.zone_size,
+                                                                              self.zone_size)
+        target = self.data[file_id][idx_id + 1: idx_id + self.pred_h + 1].reshape(self.pred_h, 1, self.zone_size,
+                                                                                  self.zone_size)
+        inputs = torch.tensor(inputs, dtype=torch.float)
+        target = torch.tensor(target, dtype=torch.float)
+
+        return {
+            'data': torch.cat([inputs, target], dim=0).permute(0, 2, 3, 1), 
+            't': t, 
+            'index': idx, 
+            'coords': self.coords,
+            'mu_clim': self.climato[file_id][0][idx_id + 1: idx_id + self.pred_h + 1],
+            'std_clim': self.climato[file_id][1][idx_id + 1: idx_id + self.pred_h + 1],
+            'mu_norm': self.cst[file_id][0][idx_id + 1: idx_id + self.pred_h + 1],
+            'std_norm': self.cst[file_id][1][idx_id + 1: idx_id + self.pred_h + 1],
+        }

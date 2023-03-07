@@ -41,8 +41,7 @@ path_model = ""
 n_steps = 300
 method = "rk4"
 subsampling_rate = 1.0
-is_markovian = True
-opts, args = getopt.getopt(sys.argv[1:], "d:f:g:p:r:s:m:")
+opts, args = getopt.getopt(sys.argv[1:], "d:f:g:p:r:s:")
 for opt, arg in opts:
     if opt == "-d":
         input_dataset = arg
@@ -56,8 +55,6 @@ for opt, arg in opts:
         subsampling_rate = float(arg)
     if opt == "-s":
         seed = int(arg)
-    if opt == "-m":
-        is_markovian = arg == 'True'
 
 if input_dataset == "wave" or input_dataset == "shallow_water":
     n_steps = 500
@@ -92,6 +89,8 @@ logger.info(f"Missingness: {100. * (1 - torch.sum(mask_ts) / (size[0] * size[1])
 plt.imshow(mask_ts.cpu().numpy(), interpolation='none')
 plt.savefig(os.path.join(path_checkpoint, f"mask.png"), dpi=72, bbox_inches='tight', pad_inches=0)
 plt.close()
+
+is_markovian = "net_cond_params" not in checkpoint
 
 net_dec_params = checkpoint["net_dec_params"]
 state_dim = net_dec_params['state_c']

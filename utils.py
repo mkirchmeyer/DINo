@@ -146,6 +146,7 @@ def process_config(input_dataset, path_results, device="gpu:0", mask_data=0.0, n
         dataset_tr_eval = dataset_ts
         
         dataset_tr_params['n_seq'] = len(dataset_tr)
+        dataset_ts_params['n_seq'] = len(dataset_ts)
         dataset_tr_eval_params = dataset_tr_params
     else:
         raise Exception(f"{input_dataset} does not exist")
@@ -281,7 +282,7 @@ def eval_dino_cond(dataloader, net_dyn, net_dec, net_cond, device, method, crite
     set_requires_grad(net_cond, False)
     for j, batch in enumerate(dataloader):
         ground_truth = batch['data'].to(device)
-        t = batch['t'][0].to(device)
+        t = batch['t'][0][n_cond:].to(device)
         b_size, t_size, h_size, w_size, _ = ground_truth.shape
         index = batch['index'].to(device)
         model_input = batch['coords'].to(device)
@@ -311,7 +312,7 @@ def eval_dino_cond(dataloader, net_dyn, net_dec, net_cond, device, method, crite
             augmented_state = torch.cat([extra_state, states_params_index[n_cond].detach().clone()], dim=-1)
 
             codes = odeint(net_dyn, augmented_state, t, method=method)  # t x batch x dim
-            codes = codes[:, :, code_dim:].permute(1, 0, 2).view(b_size, t.numel(), state_dim, code_dim)  # batch x t x dim
+            codes = codes[:, :, code_dim * state_dim:].permute(1, 0, 2).view(b_size, t.numel(), state_dim, code_dim)  # batch x t x dim
 
             model_output, _ = net_dec(model_input_exp, codes)
 

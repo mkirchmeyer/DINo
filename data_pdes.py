@@ -303,7 +303,6 @@ class NavierStokesDataset(AbstractDataset):
             state, _ = self.navier_stokes_2d(w0, f=self.params_eq['f'].to(self.device), visc=self.params_eq['visc'], T=30,
                                              delta_t=self.dt, record_steps=20)
             init_cond = state[:, :, :, -1, 0].cpu()
-            print(init_cond.shape)
             for i, ii in enumerate(range(start, end)):
                 self.buffer[f'init_cond_{ii}'] = init_cond[i].numpy()
         else:
@@ -322,7 +321,6 @@ class NavierStokesDataset(AbstractDataset):
             w0 = self._get_init_cond(traj_id, start, end).to(self.device)
             state, _ = self.navier_stokes_2d(w0, f=self.params_eq['f'].to(self.device), visc=self.params_eq['visc'],
                                              T=self.t_horizon * self.n_seq_per_traj, delta_t=self.dt, record_steps=self.n * self.n_seq_per_traj)
-        print(state.shape)
         state = state.permute(0, 4, 3, 1, 2)
         for i, ii in enumerate(range(start, end)):
             self.buffer_shelve[f'{ii}'] = {'data': state[i].cpu().numpy()}
@@ -399,9 +397,9 @@ class SST(Dataset):
         super(SST, self).__init__()
 
         self.data_dir = data_dir
-        self.pred_h = nt_pred
+        self.nt_pred = nt_pred
         self.zones = list(zones)
-        self.lb = nt_cond
+        self.nt_cond = nt_cond
         self.zone_size = 64
 
         self.data = {}
@@ -426,7 +424,7 @@ class SST(Dataset):
 
         self.len_ = int(self.len_ * 0.1)
 
-        self.len_ = self.len_ - self.pred_h - self.lb - 1
+        self.len_ = self.len_ - self.nt_pred - self.nt_cond - 1
         self._total_len = len(self.zones) * self.len_
 
     def _normalize(self):
@@ -448,13 +446,13 @@ class SST(Dataset):
         return self._total_len
 
     def __getitem__(self, idx):
-        t = torch.arange(0, self.pred_h, 1).float()
+        t = torch.arange(0, self.nt_pred + self.nt_cond, 1).float()
         file_id = self.zones[idx // self.len_]
-        idx_id = (idx % self.len_ * 10) + self.lb + 1 + self.first
+        idx_id = (idx % self.len_ * 10) + self.nt_cond + 1 + self.first
         
-        inputs = self.data[file_id][idx_id - self.lb + 1: idx_id + 1].reshape(self.lb, 1, self.zone_size,
+        inputs = self.data[file_id][idx_id - self.nt_cond + 1: idx_id + 1].reshape(self.nt_cond, 1, self.zone_size,
                                                                               self.zone_size)
-        target = self.data[file_id][idx_id + 1: idx_id + self.pred_h + 1].reshape(self.pred_h, 1, self.zone_size,
+        target = self.data[file_id][idx_id + 1: idx_id + self.nt_pred + 1].reshape(self.nt_pred, 1, self.zone_size,
                                                                                   self.zone_size)
         inputs = torch.tensor(inputs, dtype=torch.float)
         target = torch.tensor(target, dtype=torch.float)
@@ -464,8 +462,8 @@ class SST(Dataset):
             't': t, 
             'index': idx, 
             'coords': self.coords,
-            'mu_clim': self.climato[file_id][0][idx_id + 1: idx_id + self.pred_h + 1],
-            'std_clim': self.climato[file_id][1][idx_id + 1: idx_id + self.pred_h + 1],
-            'mu_norm': self.cst[file_id][0][idx_id + 1: idx_id + self.pred_h + 1],
-            'std_norm': self.cst[file_id][1][idx_id + 1: idx_id + self.pred_h + 1],
+            'mu_clim': self.climato[file_id][0][idx_id + 1: idx_id + self.nt_pred + 1],
+            'std_clim': self.climato[file_id][1][idx_id + 1: idx_id + self.nt_pred + 1],
+            'mu_norm': self.cst[file_id][0][idx_id + 1: idx_id + self.nt_pred + 1],
+            'std_norm': self.cst[file_id][1][idx_id + 1: idx_id + self.nt_pred + 1],
         }

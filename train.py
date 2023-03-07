@@ -85,7 +85,7 @@ dataset_tr_eval_params, dataset_ts_params, dataloader_tr, dataloader_tr_eval, da
 epsilon = epsilon_t = 0.99
 eval_every = 100
 n_epochs = 120000
-method = "rk4" if input_dataset != "sst" else "euler" 
+method = "rk4" if n_cond == 0 else "euler" 
 
 if input_dataset == "wave" or input_dataset == "shallow_water":
     n_steps = 500
@@ -110,7 +110,12 @@ if checkpoint_path is None:  # Start from scratch
     net_dec = Decoder(**net_dec_params)
     net_dyn = Derivative(**net_dyn_params)
     if n_cond > 0:
-        net_cond = SetEncoder(code_dim, n_cond, 1024)
+        net_cond_params = {
+            'code_size': code_dim * state_dim,
+            'n_cond': n_cond,
+            'hidden_size': 1024
+        }
+        net_cond = SetEncoder(**net_cond_params)
     states_params = nn.ParameterList([nn.Parameter(torch.zeros(n_frames_train, code_dim * state_dim).to(device)) for _ in range(dataset_tr_eval_params["n_seq"])])
 
     print(dict(net_dec.named_parameters()).keys())
@@ -271,6 +276,9 @@ for epoch in range(n_epochs):
                         "epoch": epoch,
                         "dec_state_dict": net_dec.state_dict(),
                         "dyn_state_dict": net_dyn.state_dict(),
+                        "optim_net_dec": optim_net_dec.state_dict(),
+                        "optim_net_dyn": optim_net_dyn.state_dict(),
+                        "optim_states": optim_states.state_dict(),
                         "states_params": states_params,
                         "loss_out_test": loss_ts_min,
                         "net_dec_params": net_dec_params,
@@ -288,7 +296,7 @@ for epoch in range(n_epochs):
         for i, batch in enumerate(dataloader_tr):
             ground_truth = batch['data'].to(device)
             model_input = batch['coords'].to(device) 
-            t = batch['t'][0].to(device)
+            t = batch['t'][0][n_cond:].to(device)
             index = batch['index'].to(device)
             b_size, t_size, h_size, w_size, _ = ground_truth.shape
             if epoch == 0 and i == 0:
@@ -323,7 +331,7 @@ for epoch in range(n_epochs):
             augmented_states = torch.cat([extra_states, states_params_index[n_cond:].detach().clone()], dim=-1)
 
             codes = scheduling(odeint, net_dyn, augmented_states, t, epsilon_t, method=method)
-            loss_l2_states = criterion(codes[:, :, code_dim:], states_params_index[n_cond:].detach().clone())
+            loss_l2_states = criterion(codes[:, :, code_dim * state_dim:], states_params_index[n_cond:].detach().clone())
             loss_opt_states = loss_l2_states
             
             loss_opt_states.backward()
@@ -374,13 +382,15 @@ for epoch in range(n_epochs):
                         "dec_state_dict": net_dec.state_dict(),
                         "dyn_state_dict": net_dyn.state_dict(),
                         "cond_state_dict": net_cond.state_dict(),
-                        'optim_net_dyn': optim_net_dyn.state_dict(),
-                        'optim_net_cond': optim_net_cond.state_dict(),
-                        'optim_states': optim_states.state_dict(),
+                        "optim_net_dec": optim_net_dec.state_dict(),
+                        "optim_net_dyn": optim_net_dyn.state_dict(),
+                        "optim_net_cond": optim_net_cond.state_dict(),
+                        "optim_states": optim_states.state_dict(),
                         "states_params": states_params,
                         "loss_out_test": loss_ts_min,
                         "net_dec_params": net_dec_params,
                         "net_dyn_params": net_dyn_params,
+                        "net_cond_params": net_cond_params,
                         "epsilon_t": epsilon_t,
                         "dataset_tr_params": dataset_tr_params
                     }, os.path.join(path_checkpoint, f"model_tr.pt"))
@@ -401,6 +411,7 @@ for epoch in range(n_epochs):
                         "dec_state_dict": net_dec.state_dict(),
                         "dyn_state_dict": net_dyn.state_dict(),
                         "cond_state_dict": net_cond.state_dict(),
+                        "optim_net_dec": optim_net_dec.state_dict(),
                         'optim_net_dyn': optim_net_dyn.state_dict(),
                         'optim_net_cond': optim_net_cond.state_dict(),
                         'optim_states': optim_states.state_dict(),
@@ -408,6 +419,7 @@ for epoch in range(n_epochs):
                         "loss_out_test": loss_ts_min,
                         "net_dec_params": net_dec_params,
                         "net_dyn_params": net_dyn_params,
+                        "net_cond_params": net_cond_params,
                         "epsilon_t": epsilon_t,
                         "dataset_tr_params": dataset_tr_params
                         }, os.path.join(path_checkpoint, f"model_ts.pt"))

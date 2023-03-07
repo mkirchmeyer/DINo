@@ -14,6 +14,7 @@
 
 import matplotlib
 from ode_model import Decoder, Derivative
+from network import SetEncoder
 from datetime import datetime
 import getopt
 import sys
@@ -22,7 +23,7 @@ import logging
 from torch import nn
 import matplotlib.pyplot as plt
 import torch
-from utils import process_config, set_rdm_seed, create_logger, write_image, eval_dino
+from utils import process_config, set_rdm_seed, create_logger, write_image, eval_dino, eval_dino_cond
 
 logging.getLogger('numba').setLevel(logging.CRITICAL)
 logging.getLogger("matplotlib.font_manager").disabled = True
@@ -40,7 +41,8 @@ path_model = ""
 n_steps = 300
 method = "rk4"
 subsampling_rate = 1.0
-opts, args = getopt.getopt(sys.argv[1:], "d:f:g:p:r:s:")
+is_markovian = True
+opts, args = getopt.getopt(sys.argv[1:], "d:f:g:p:r:s:m:")
 for opt, arg in opts:
     if opt == "-d":
         input_dataset = arg
@@ -54,7 +56,8 @@ for opt, arg in opts:
         subsampling_rate = float(arg)
     if opt == "-s":
         seed = int(arg)
-
+    if opt == "-m":
+        is_markovian = arg == 'True'
 
 if input_dataset == "wave" or input_dataset == "shallow_water":
     n_steps = 500
@@ -108,23 +111,44 @@ net_dyn_dict.update(pretrained_dict)
 net_dyn.load_state_dict(net_dyn_dict)
 print(dict(net_dyn.named_parameters()).keys())
 
+if not is_markovian:
+    net_cond_params = checkpoint["net_cond_params"]
+    net_cond = SetEncoder(**net_cond_params)
+    net_cond_dict = net_cond.state_dict()
+    pretrained_dict = {k: v for k, v in checkpoint['cond_state_dict'].items() if k in net_dyn_dict}
+    net_cond_dict.update(pretrained_dict)
+    net_cond.load_state_dict(net_cond_dict)
+    print(dict(net_cond.named_parameters()).keys())
+
 net_dec = net_dec.to(device)
 net_dyn = net_dyn.to(device)
+if not is_markovian:
+    net_cond = net_cond.to(device)
 criterion = nn.MSELoss()
 
 # Logs
 logger.info(f"run_id: {ts}")
 
 print("Evaluating test...")
-loss_ts, loss_ts_in_t, loss_ts_in_t_in_s, loss_ts_in_t_out_s, loss_ts_out_t, loss_ts_out_t_in_s, loss_ts_out_t_out_s, \
-gts, mos = eval_dino(
-    dataloader_ts, net_dyn, net_dec, device, method, criterion, mask_data, mask_ts, state_dim, code_dim, coord_dim,
-    n_frames_train=n_frames_train, lr_adapt=lr_adapt, dataset_params=dataset_ts_params, n_steps=n_steps, save_best=True)
-for j, (ground_truth, model_output) in enumerate(zip(gts, mos)):
-    if j in [0]:
-        for state_idx in range(state_dim):
-            write_image(ground_truth[:first], model_output[:first], state_idx,
-                        os.path.join(path_checkpoint, f"img_ts_state{state_idx}.pdf"))
-logger.info("Dataset %s, Runid %s, Loss_ts: %.3e In-t: %.3e In-s: %.3e Out-s: %.3e Out-t: %.3e In-s: %.3e Out-s: %.3e" % (
-    input_dataset, ts, loss_ts, loss_ts_in_t, loss_ts_in_t_in_s, loss_ts_in_t_out_s, loss_ts_out_t, loss_ts_out_t_in_s, loss_ts_out_t_out_s))
-logger.info("========")
+if is_markovian:
+    loss_ts, loss_ts_in_t, loss_ts_in_t_in_s, loss_ts_in_t_out_s, loss_ts_out_t, loss_ts_out_t_in_s, loss_ts_out_t_out_s, \
+    gts, mos = eval_dino(
+        dataloader_ts, net_dyn, net_dec, device, method, criterion, mask_data, mask_ts, state_dim, code_dim, coord_dim,
+        n_frames_train=n_frames_train, lr_adapt=lr_adapt, dataset_params=dataset_ts_params, n_steps=n_steps, save_best=True)
+    for j, (ground_truth, model_output) in enumerate(zip(gts, mos)):
+        if j in [0]:
+            for state_idx in range(state_dim):
+                write_image(ground_truth[:first], model_output[:first], state_idx,
+                            os.path.join(path_checkpoint, f"img_ts_state{state_idx}.pdf"))
+    logger.info("Dataset %s, Runid %s, Loss_ts: %.3e In-t: %.3e In-s: %.3e Out-s: %.3e Out-t: %.3e In-s: %.3e Out-s: %.3e" % (
+        input_dataset, ts, loss_ts, loss_ts_in_t, loss_ts_in_t_in_s, loss_ts_in_t_out_s, loss_ts_out_t, loss_ts_out_t_in_s, loss_ts_out_t_out_s))
+    logger.info("========")
+else:
+    loss_ts, loss_ts_in_t, gts, mos, times, ss, pss, cs = eval_dino_cond(dataloader_ts, net_dyn, net_dec, net_cond, device, method,
+                criterion, mask_data, mask_ts, state_dim, code_dim, coord_dim, n_frames_train, lr_adapt=lr_adapt, input_dataset=input_dataset, is_test=True)
+    for j, (ground_truth, model_output, codes, states, t) in enumerate(zip(gts, mos, cs, ss, times)):
+        if j in [0]:
+            for state_idx in range(state_dim):
+                write_image(ground_truth[:first], model_output[:first], state_idx, os.path.join(path_checkpoint, f"img_ts_state{state_idx}.pdf"), cmap="seismic")
+    logger.info("Dataset %s, Runid %s, Loss_ts: %.3e In-t: %.3e" % (input_dataset, ts, loss_ts, loss_ts_in_t))
+    logger.info("========")

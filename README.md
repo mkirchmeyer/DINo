@@ -40,6 +40,7 @@ python3 train.py -d <DATASET> -g 0 -r <RATE>
 * `-f`: home path (defaults to `"./results"`)
 * `-g`: gpu id (defaults to `0`)
 * `-r`: subsampling rate (defaults to `1.0`)
+* `-w`: the length of conditioning window for non-Markovian dynamics (defaults to Markovian - `0`)
 
 By running the train script, it will generate an unique id of each run, called the run_id.
 
@@ -64,6 +65,7 @@ python3 test.py -d <DATASET> -p <RUN_ID> -g 0 -r <RATE> -s <SEED>
 * `-p`: run id
 * `-r`: subsampling rate (defaults to `1.0`)
 * `-s`: subsampling seed (defaults to `1` the train subsampling seed; for Table 3.a. we chose `-s 2`)
+* `-m`: option to choose between Markovian and non-Markovian model (defaults to `True`)
 
 https://user-images.githubusercontent.com/15007187/194547306-e0f151cf-a4fc-43be-a907-35816124020d.mp4
 

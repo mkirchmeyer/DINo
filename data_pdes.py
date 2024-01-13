@@ -16,7 +16,7 @@
 import torch
 from torch.utils.data import Dataset
 import math
-from pde import ScalarField, UnitGrid, MemoryStorage, PDE
+from pde import ScalarField, CartesianGrid, MemoryStorage, PDE
 from pde.pdes import WavePDE
 import numpy as np
 import os
@@ -113,7 +113,7 @@ class AbstractDataset(Dataset):
 class WaveDataset(AbstractDataset):
     def __init__(self, param, coords='ang', *args, **kwargs):
         super().__init__(*args, **kwargs)
-        self.grid = UnitGrid([self.size, self.size], periodic=True)
+        self.grid = CartesianGrid([[-1., 1.]] * 2, self.size, periodic=True)
         self.eqs = WavePDE(**param)
         
         coords_list = []
